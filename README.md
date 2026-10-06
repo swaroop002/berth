@@ -1,7 +1,7 @@
 # berth
 
 [![ci](https://img.shields.io/badge/tests-race-brightgreen)](.github/workflows/ci.yml)
-[![go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
+[![go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 A control plane for developer environments, written in Go. You declare an
