@@ -1,12 +1,16 @@
 # A data-science environment: compute, a disk, a hostname, an authenticated
 # HTTPS route, and a pulse telemetry tenant. Deleted automatically after 72h.
-apiVersion: forge.swaroop002.dev/v1alpha1
+apiVersion: berth.swaroop002.dev/v1alpha1
 kind: Environment
 metadata:
   name: ds-alice
   team: data-science
   owner: alice
-  labels: {purpose: experiments}
+  labels:
+    purpose: experiments
+    # Where berth's gateway proxies this environment's route. Optional: without
+    # it the route answers with a status page. Try: python3 -m http.server 3000
+    berth.dev/upstream: "http://localhost:3000"
 spec:
   size: medium
   region: ap-south-1

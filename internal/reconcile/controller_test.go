@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/swaroop002/forge/internal/provider"
-	"github.com/swaroop002/forge/internal/spec"
-	"github.com/swaroop002/forge/internal/store"
+	"github.com/swaroop002/berth/internal/provider"
+	"github.com/swaroop002/berth/internal/spec"
+	"github.com/swaroop002/berth/internal/store"
 )
 
 func quiet() *slog.Logger {
@@ -23,7 +23,7 @@ func quiet() *slog.Logger {
 
 func setup(t *testing.T) (*store.Store, *provider.Fake, *Controller) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "forge.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "berth.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

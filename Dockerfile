@@ -4,12 +4,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG TARGETOS TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/forge ./cmd/forge
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/berth ./cmd/berth
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/forge /forge
+COPY --from=build /out/berth /berth
 VOLUME ["/data"]
 EXPOSE 8080
 USER nonroot
-ENTRYPOINT ["/forge"]
-CMD ["serve", "--listen", ":8080", "--db", "/data/forge.db"]
+ENTRYPOINT ["/berth"]
+CMD ["serve", "--listen", ":8080", "--db", "/data/berth.db"]

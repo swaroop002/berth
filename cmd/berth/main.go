@@ -1,4 +1,4 @@
-// Command forge is the platform control plane (serve) and its CLI.
+// Command berth is the platform control plane (serve) and its CLI.
 package main
 
 import (
@@ -20,11 +20,15 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/swaroop002/forge/internal/api"
-	"github.com/swaroop002/forge/internal/provider"
-	"github.com/swaroop002/forge/internal/reconcile"
-	"github.com/swaroop002/forge/internal/spec"
-	"github.com/swaroop002/forge/internal/store"
+	"github.com/swaroop002/berth/internal/api"
+	"github.com/swaroop002/berth/internal/auth"
+	"github.com/swaroop002/berth/internal/cost"
+	"github.com/swaroop002/berth/internal/gateway"
+	"github.com/swaroop002/berth/internal/metrics"
+	"github.com/swaroop002/berth/internal/provider"
+	"github.com/swaroop002/berth/internal/reconcile"
+	"github.com/swaroop002/berth/internal/spec"
+	"github.com/swaroop002/berth/internal/store"
 )
 
 func main() {
@@ -46,39 +50,52 @@ func main() {
 		err = events(os.Args[2:])
 	case "status":
 		err = status(os.Args[2:])
+	case "costs":
+		err = costs(os.Args[2:])
 	case "version":
-		fmt.Println("forge 0.1.0-dev")
+		fmt.Println("berth 0.2.0-dev")
 	default:
 		usage()
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "forge:", err)
+		fmt.Fprintln(os.Stderr, "berth:", err)
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `forge — environment control plane
+	fmt.Fprintln(os.Stderr, `berth — environment control plane
 
-  forge serve    [--listen :8080] [--db ./forge.db] [--workers 4] [--resync 2m] [--api-token T]
-                 [--fake-latency 300ms] [--fake-fail-every 0]
-  forge apply    -f env.yaml                 create or update an environment
-  forge get      [name] [-o yaml|json]       one environment, or a table of all
-  forge delete   <name>                      tear down and remove
-  forge events   <name> [--limit 50]         what happened to it
-  forge status                               phases, pending changes, queue depth
+  berth serve    [--listen :8080] [--gateway-listen :8081] [--db ./berth.db] [--workers 4] [--resync 2m]
+                 [--admin-token T] [--team-token team=T ...] [--fake-latency 300ms] [--fake-fail-every 0]
+  berth apply    -f env.yaml                 create or update an environment
+  berth get      [name] [-o yaml|json]       one environment, or a table of all
+  berth delete   <name>                      tear down and remove
+  berth events   <name> [--limit 50]         what happened to it
+  berth status                               phases, pending changes, queue depth, run rate
+  berth costs                                what every environment costs, by team
 
-  --server http://localhost:8080 and --token apply to every client command (or FORGE_SERVER / FORGE_TOKEN).`)
+  --server http://localhost:8080 and --token apply to every client command (or BERTH_SERVER / BERTH_TOKEN).`)
 }
+
+type tokenList []string
+
+func (k *tokenList) String() string     { return strings.Join(*k, ",") }
+func (k *tokenList) Set(v string) error { *k = append(*k, v); return nil }
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	listen := fs.String("listen", ":8080", "address to listen on")
-	db := fs.String("db", "./forge.db", "state database file")
+	listen := fs.String("listen", ":8080", "API address")
+	gwListen := fs.String("gateway-listen", ":8081", "route gateway address (empty = no gateway)")
+	gwPublic := fs.String("gateway-public", "", "how clients reach the gateway (default http://localhost<gateway-listen>)")
+	db := fs.String("db", "./berth.db", "state database file")
 	workers := fs.Int("workers", 4, "concurrent reconcilers")
 	resync := fs.Duration("resync", 2*time.Minute, "how often converged environments are re-checked for drift")
-	token := fs.String("api-token", os.Getenv("FORGE_TOKEN"), "bearer token clients must send (empty = open, development only)")
+	admin := fs.String("admin-token", os.Getenv("BERTH_TOKEN"), "token that sees every team (empty with no team tokens = open, development only)")
+	fs.StringVar(admin, "api-token", *admin, "alias of --admin-token")
+	var teams tokenList
+	fs.Var(&teams, "team-token", "team=token pair; repeatable. A team's token sees only that team's environments")
 	fakeLatency := fs.Duration("fake-latency", 200*time.Millisecond, "fake provider: latency per call")
 	fakeFail := fs.Int("fake-fail-every", 0, "fake provider: every Nth call fails transiently")
 	if err := fs.Parse(args); err != nil {
@@ -86,34 +103,84 @@ func serve(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
+	resolver, err := auth.New(teams, *admin)
+	if err != nil {
+		return err
+	}
+	if resolver.Open() {
+		log.Warn("no --admin-token or --team-token: the API and every route are open (development mode)")
+	}
 	st, err := store.Open(*db)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	pv := provider.NewFake()
-	pv.Latency, pv.FailEvery = *fakeLatency, *fakeFail
+	m := metrics.New()
+
+	fake := provider.NewFake()
+	fake.Latency, fake.FailEvery = *fakeLatency, *fakeFail
+	if n, err := fake.Persist(*db + ".fake-inventory.json"); err != nil {
+		return err
+	} else if n > 0 {
+		log.Info("fake provider inventory restored", "resources", n)
+	}
+	var pv provider.Provider = fake
+	var gw *gateway.Gateway
+	var routes func() any
+	if *gwListen != "" {
+		if *gwPublic == "" {
+			if strings.HasPrefix(*gwListen, ":") {
+				*gwPublic = "http://localhost" + *gwListen
+			} else {
+				*gwPublic = "http://" + *gwListen
+			}
+		}
+		gw = gateway.New(resolver, log)
+		gw.OnRequest = m.GatewayRequest
+		gp := gateway.Wrap(pv, gw, *gwPublic)
+		if envs, err := st.List(); err == nil {
+			if n := gp.Restore(envs); n > 0 {
+				log.Info("gateway routes restored", "routes", n)
+			}
+		}
+		pv = gp
+		routes = func() any { return gw.Hosts() }
+	}
 
 	ctrl := reconcile.New(st, pv, reconcile.Options{Workers: *workers, Resync: *resync, Logger: log,
-		Hooks: reconcile.Hooks{Reconciled: func(name, result string, took time.Duration) {
-			log.Info("reconciled", "env", name, "result", result, "took", took.Round(time.Millisecond))
-		}}})
-	if *token == "" {
-		log.Warn("no --api-token: the API is open (development mode)")
-	}
-	srv := &http.Server{Addr: *listen, Handler: api.New(st, ctrl, *token).Handler(),
+		Hooks: reconcile.Hooks{
+			Reconciled: func(name, result string, took time.Duration) {
+				m.Reconciled(name, result, took)
+				log.Info("reconciled", "env", name, "result", result, "took", took.Round(time.Millisecond))
+			},
+			QueueDepth: func(n int) { m.QueueDepth.Set(float64(n)) },
+		}})
+	srv := &http.Server{Addr: *listen,
+		Handler:           api.New(st, ctrl, api.Options{Auth: resolver, Rates: cost.Default, Metrics: m.Handler(), Routes: routes}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	go func() { errc <- ctrl.Run(ctx) }()
 	go func() {
-		log.Info("forge listening", "addr", *listen, "db", *db, "provider", pv.Name(), "workers", *workers)
+		log.Info("berth listening", "addr", *listen, "db", *db, "provider", pv.Name(), "workers", *workers)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
+	var gwSrv *http.Server
+	if gw != nil {
+		gwSrv = &http.Server{Addr: *gwListen, Handler: gw, ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			log.Info("gateway listening", "addr", *gwListen, "public", *gwPublic)
+			if err := gwSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
+	go observe(ctx, st, m)
+
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
@@ -125,8 +192,32 @@ func serve(args []string) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(shutdown)
+	if gwSrv != nil {
+		gwSrv.Shutdown(shutdown)
+	}
 	stop()
 	return nil
+}
+
+// observe refreshes the per-phase and per-team gauges every few seconds.
+func observe(ctx context.Context, st *store.Store, m *metrics.Metrics) {
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		envs, err := st.List()
+		if err == nil {
+			phases := map[string]int{}
+			for _, e := range envs {
+				phases[string(e.Status.Phase)]++
+			}
+			m.Observe(phases, cost.Default.Build(envs, time.Now()).TeamHourly)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // --- client ----------------------------------------------------------------------
@@ -134,12 +225,6 @@ func serve(args []string) error {
 type client struct {
 	base, token string
 	http        *http.Client
-}
-
-func newClient(fs *flag.FlagSet) *client {
-	server := fs.String("server", envOr("FORGE_SERVER", "http://localhost:8080"), "forge API address")
-	token := fs.String("token", os.Getenv("FORGE_TOKEN"), "bearer token")
-	return &client{base: *server, token: *token, http: &http.Client{Timeout: 15 * time.Second}}
 }
 
 func (c *client) do(method, path string, body []byte, out any) (int, error) {
@@ -296,9 +381,27 @@ func status(args []string) error {
 	return render(out, "yaml")
 }
 
+func costs(args []string) error {
+	fs := flag.NewFlagSet("costs", flag.ContinueOnError)
+	out := fs.String("o", "", "output: yaml | json (default: table)")
+	c := newClientLazy(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	var rep cost.Report
+	if _, err := c().do(http.MethodGet, "/v1/costs", nil, &rep); err != nil {
+		return err
+	}
+	if *out != "" {
+		return render(rep, *out)
+	}
+	fmt.Print(api.CostTable(rep))
+	return nil
+}
+
 func newClientLazy(fs *flag.FlagSet) func() *client {
-	server := fs.String("server", envOr("FORGE_SERVER", "http://localhost:8080"), "forge API address")
-	token := fs.String("token", os.Getenv("FORGE_TOKEN"), "bearer token")
+	server := fs.String("server", envOr("BERTH_SERVER", "http://localhost:8080"), "berth API address")
+	token := fs.String("token", os.Getenv("BERTH_TOKEN"), "bearer token")
 	return func() *client {
 		return &client{base: *server, token: *token, http: &http.Client{Timeout: 15 * time.Second}}
 	}

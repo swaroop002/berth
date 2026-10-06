@@ -1,4 +1,4 @@
-apiVersion: forge.swaroop002.dev/v1alpha1
+apiVersion: berth.swaroop002.dev/v1alpha1
 kind: Environment
 metadata:
   name: api-staging

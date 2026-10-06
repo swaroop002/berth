@@ -2,13 +2,15 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"os"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/swaroop002/forge/internal/spec"
+	"github.com/swaroop002/berth/internal/spec"
 )
 
 // Fake is an in-memory provider with knobs for latency and failure, so the
@@ -18,6 +20,7 @@ type Fake struct {
 	inventory   map[string]Resource // id -> resource
 	calls       map[string]int      // "Ensure:Compute" etc.
 	ensureCount int
+	path        string // when set, inventory is saved here after every change
 	// Knobs
 	Latency   time.Duration
 	FailEvery int             // every Nth Ensure fails transiently (0 = never)
@@ -30,6 +33,38 @@ func NewFake() *Fake {
 }
 
 func (f *Fake) Name() string { return "fake" }
+
+// Persist loads the inventory from path (if it exists) and saves it after
+// every change, so the fake cloud survives a berth restart the way a real
+// one would. Returns how many resources were restored.
+func (f *Fake) Persist(path string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.path = path
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err := json.Unmarshal(b, &f.inventory); err != nil {
+		return 0, fmt.Errorf("fake inventory %s: %w", path, err)
+	}
+	return len(f.inventory), nil
+}
+
+// save writes the inventory; caller holds the lock.
+func (f *Fake) save() {
+	if f.path == "" {
+		return
+	}
+	b, _ := json.MarshalIndent(f.inventory, "", "  ")
+	tmp := f.path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err == nil {
+		os.Rename(tmp, f.path)
+	}
+}
 
 func (f *Fake) Ensure(ctx context.Context, step string, env *spec.Environment, prior string) (Resource, error) {
 	if err := f.wait(ctx); err != nil {
@@ -65,6 +100,7 @@ func (f *Fake) Ensure(ctx context.Context, step string, env *spec.Environment, p
 		r.Endpoint = fmt.Sprintf("pulse://tenant/%s", env.Spec.Telemetry.Tenant)
 	}
 	f.inventory[id] = r
+	f.save()
 	return r, nil
 }
 
@@ -87,6 +123,7 @@ func (f *Fake) Destroy(ctx context.Context, step string, id string) error {
 	defer f.mu.Unlock()
 	f.calls["Destroy:"+step]++
 	delete(f.inventory, id)
+	f.save()
 	return nil
 }
 
@@ -125,11 +162,12 @@ func (f *Fake) Calls() map[string]int {
 	return out
 }
 
-// Lose deletes a resource behind forge's back (someone in the console).
+// Lose deletes a resource behind berth's back (someone in the console).
 func (f *Fake) Lose(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.inventory, id)
+	f.save()
 }
 
 func hash(s string) uint32 { h := fnv.New32a(); h.Write([]byte(s)); return h.Sum32() }

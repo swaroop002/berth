@@ -1,4 +1,4 @@
-// Package spec is forge's API: what a user asks for (an Environment) and what
+// Package spec is berth's API: what a user asks for (an Environment) and what
 // the platform reports back (its Status). Versioned like a Kubernetes object
 // so a later operator can serve the same type as a CRD unchanged.
 package spec
@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	APIVersion = "forge.swaroop002.dev/v1alpha1"
+	APIVersion = "berth.swaroop002.dev/v1alpha1"
 	KindEnv    = "Environment"
 )
 
-// Environment is the unit forge manages: compute plus the plumbing around it.
+// Environment is the unit berth manages: compute plus the plumbing around it.
 type Environment struct {
 	APIVersion string   `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string   `json:"kind" yaml:"kind"`

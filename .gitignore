@@ -1,6 +1,7 @@
 /bin/
 /dist/
 *.db
+*.fake-inventory.json
 *.test
 *.out
 coverage.*

@@ -1,4 +1,4 @@
-// Package reconcile is forge's control loop. It does one thing: make the
+// Package reconcile is berth's control loop. It does one thing: make the
 // world look like the spec, then check again later.
 //
 //	desired (store) ──▶ reconcile(name) ──▶ provider.Ensure per step ──▶ status
@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/swaroop002/forge/internal/provider"
-	"github.com/swaroop002/forge/internal/spec"
-	"github.com/swaroop002/forge/internal/store"
+	"github.com/swaroop002/berth/internal/provider"
+	"github.com/swaroop002/berth/internal/spec"
+	"github.com/swaroop002/berth/internal/store"
 )
 
 // Options tune the loop.
@@ -189,6 +189,7 @@ func (c *Controller) Reconcile(ctx context.Context, name string) (time.Duration,
 
 	// 2. Wanted steps, in dependency order.
 	for _, step := range wanted {
+		env.Status = st // a step may need what earlier steps produced (endpoints)
 		prior := st.Resources[step]
 		cnd := st.Condition(step)
 		goodForThisGen := cnd != nil && cnd.Status == "True" && cnd.ObservedGeneration == env.Metadata.Generation
@@ -300,7 +301,7 @@ func (c *Controller) event(env *spec.Environment, typ, msg string) {
 	}
 }
 
-// allSteps is every step forge knows, in dependency order.
+// allSteps is every step berth knows, in dependency order.
 var allSteps = []string{"Compute", "Storage", "DNS", "Route", "Telemetry"}
 
 func reverse(s []string) []string {

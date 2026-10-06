@@ -11,7 +11,7 @@ was deleted by hand, a change arrived while a previous one was still running.
 
 ## Decision
 
-forge stores *desired state* and runs a reconciler: compare the spec with
+berth stores *desired state* and runs a reconciler: compare the spec with
 what the provider reports, do the minimum to close the gap, record what was
 observed, repeat on change, on failure (with backoff) and on a timer (drift).
 
@@ -19,7 +19,7 @@ observed, repeat on change, on failure (with backoff) and on a timer (drift).
 
 - A half-finished step is not a special case: the next reconcile continues
   from the recorded resource ids.
-- A resource deleted behind forge's back is found by the periodic check and
+- A resource deleted behind berth's back is found by the periodic check and
   recreated, with a `Drift` event saying so.
 - Two changes in a row are not a race: the queue de-duplicates by name and a
   change that arrives mid-reconcile is run once more afterwards.

@@ -1,4 +1,4 @@
-// Package provider is the boundary between forge and the world: everything
+// Package provider is the boundary between berth and the world: everything
 // the reconciler needs from a cloud is behind this interface, so the control
 // plane can be tested against a fake and later pointed at AWS or Kubernetes.
 //
@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/swaroop002/forge/internal/spec"
+	"github.com/swaroop002/berth/internal/spec"
 )
 
 // Resource is what a provider created for one step.

@@ -11,7 +11,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/swaroop002/forge/internal/spec"
+	"github.com/swaroop002/berth/internal/spec"
 )
 
 var (

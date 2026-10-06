@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/swaroop002/forge/internal/spec"
+	"github.com/swaroop002/berth/internal/spec"
 )
 
 func env(name string) *spec.Environment {
@@ -15,7 +15,7 @@ func env(name string) *spec.Environment {
 }
 
 func TestApplyGenerations(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "forge.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "berth.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestApplyGenerations(t *testing.T) {
 }
 
 func TestDeleteFlowAndEvents(t *testing.T) {
-	s, _ := Open(filepath.Join(t.TempDir(), "forge.db"))
+	s, _ := Open(filepath.Join(t.TempDir(), "berth.db"))
 	defer s.Close()
 	s.Apply(env("a"))
 	d, err := s.MarkDeleting("a")

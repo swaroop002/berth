@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/swaroop002/forge/internal/spec"
+	"github.com/swaroop002/berth/internal/spec"
 )
 
 func TestFakeIsIdempotentAndCanLoseThings(t *testing.T) {
