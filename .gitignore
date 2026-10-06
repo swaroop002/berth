@@ -1,0 +1,8 @@
+/bin/
+/dist/
+*.db
+*.test
+*.out
+coverage.*
+.idea/
+.vscode/
